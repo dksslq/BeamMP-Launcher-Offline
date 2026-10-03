@@ -1,3 +1,17 @@
+# BeamMP-Launcher-Offline
+
+> **离线版说明**：这是 [BeamMP/BeamMP-Launcher](https://github.com/BeamMP/BeamMP-Launcher) 的纯离线分支。
+> **不再访问 auth/backend/forum 任何 BeamMP 在线服务**：无需注册、无需 key；
+> 玩家昵称本地保存（`player_name`）；客户端 mod 从本地 `BeamMP.zip` 安装
+> （见主仓库 [Release](https://github.com/dksslq/BeamMP-Offline/releases)）；
+> 服务器列表为空，请使用游戏内 **Direct Connect** 输入 IP 直连。
+>
+> - 🧠 **项目完整记忆**：[CONTEXT.md](./CONTEXT.md)（改动清单 + 上游合并手册，必读）
+> - 配套仓库：[BeamMP-Offline](https://github.com/dksslq/BeamMP-Offline)（主仓库/客户端 mod） ·
+>   [BeamMP-Server-Offline](https://github.com/dksslq/BeamMP-Server-Offline)
+>
+> 以下为上游原版 README 内容。
+
 # BeamMP-Launcher
 
 The launcher is the way we communitcate to outside the game, it does a few automated actions such as but not limited to: downloading the mod, launching the game, and create a connection to a server.

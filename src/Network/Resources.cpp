@@ -76,7 +76,17 @@ std::string Auth(SOCKET Sock) {
         return "";
     }
 
-    TCPSend(PublicKey, Sock);
+    // === OFFLINE MODE (BeamMP-Offline) ===
+    // Upstream sent the account public key here for backend verification.
+    // In offline mode we send the locally chosen player name instead; the
+    // offline server uses it directly as the player's name. An empty name
+    // means the server treats us as "Guest".
+    extern std::string Username;
+    std::string OfflineName = Username;
+    if (OfflineName.size() > 32) {
+        OfflineName.resize(32);
+    }
+    TCPSend(OfflineName, Sock);
     if (Terminate) {
         CoreSend("L");
         return "";

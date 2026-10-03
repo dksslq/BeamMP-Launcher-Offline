@@ -2,11 +2,18 @@
  Copyright (C) 2024 BeamMP Ltd., BeamMP team and contributors.
  Licensed under AGPL-3.0 (or later), see <https://www.gnu.org/licenses/>.
  SPDX-License-Identifier: AGPL-3.0-or-later
-*/
 
+ OFFLINE EDITION (BeamMP-Offline):
+ This file has been rewritten to remove ALL communication with the BeamMP
+ authentication backend (auth.beammp.com). No account, forum key, Discord
+ or any other online identity service is required. The player simply picks
+ a display name in-game; it is stored locally in a "player_name" file and
+ sent to the server when connecting. See CONTEXT.md in the repo root.
+*/
 
 #include "Http.h"
 #include "Logger.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -19,23 +26,22 @@ extern std::string Username;
 extern std::string UserRole;
 extern int UserID;
 
+static constexpr const char* PlayerNameFile = "player_name";
+
 void UpdateKey(const char* newKey) {
-    if (newKey && std::isalnum(newKey[0])) {
+    // In the offline edition this stores the locally chosen player name.
+    if (newKey && newKey[0] != '\0') {
         PrivateKey = newKey;
-        std::ofstream Key("key");
+        std::ofstream Key(PlayerNameFile);
         if (Key.is_open()) {
             Key << newKey;
             Key.close();
         } else
             fatal("Cannot write to disk!");
-    } else if (fs::exists("key")) {
-        remove("key");
+    } else if (fs::exists(PlayerNameFile)) {
+        remove(PlayerNameFile);
     }
 }
-
-/// "username":"value","password":"value"
-/// "Guest":"Name"
-/// "pk":"private_key"
 
 std::string GetFail(const std::string& R) {
     std::string DRet = R"({"success":false,"message":)";
@@ -44,6 +50,24 @@ std::string GetFail(const std::string& R) {
     return DRet;
 }
 
+static std::string SanitizePlayerName(std::string Name) {
+    // strip control characters, trim spaces, cap length (server caps at 32)
+    Name.erase(std::remove_if(Name.begin(), Name.end(),
+                   [](unsigned char c) { return c < 0x20 || c == 0x7F; }),
+        Name.end());
+    size_t Start = Name.find_first_not_of(" \t");
+    if (Start == std::string::npos)
+        return "";
+    size_t End = Name.find_last_not_of(" \t");
+    Name = Name.substr(Start, End - Start + 1);
+    if (Name.size() > 32)
+        Name.resize(32);
+    return Name;
+}
+
+/// "username":"value","password":"value"
+/// "Guest":"Name"
+/// "pk":"private_key"
 std::string Login(const std::string& fields) {
     if (fields == "LO") {
         Username = "";
@@ -53,98 +77,69 @@ std::string Login(const std::string& fields) {
         UpdateKey(nullptr);
         return "";
     }
-    info("Attempting to authenticate...");
+    // === OFFLINE MODE: no auth server is contacted. ===
+    // The in-game UI sends {"username":"<name>"}; we validate it locally,
+    // remember it, and report success immediately.
+    info("Offline mode: setting local player name (no authentication server contacted)");
+    std::string Name;
     try {
-        std::string Buffer = HTTP::Post("https://auth.beammp.com/userlogin", fields);
-
-        if (Buffer.empty()) {
-            return GetFail("Failed to communicate with the auth system!");
+        nlohmann::json d = nlohmann::json::parse(fields, nullptr, false);
+        if (!d.is_discarded() && d.is_object()) {
+            if (d.contains("username") && d["username"].is_string()) {
+                Name = d["username"].get<std::string>();
+            } else if (d.contains("Guest") && d["Guest"].is_string()) {
+                Name = d["Guest"].get<std::string>();
+            }
         }
-
-        nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
-
-        if (Buffer.at(0) != '{' || d.is_discarded()) {
-            error(Buffer);
-            return GetFail("Invalid answer from authentication servers, please try again later!");
-        }
-        if (d.contains("success") && d["success"].get<bool>()) {
-            LoginAuth = true;
-            if (d.contains("username")) {
-                Username = d["username"].get<std::string>();
-            }
-            if (d.contains("role")) {
-                UserRole = d["role"].get<std::string>();
-            }
-            if (d.contains("id")) {
-                UserID = d["id"].get<int>();
-            }
-            if (d.contains("private_key")) {
-                UpdateKey(d["private_key"].get<std::string>().c_str());
-            }
-            if (d.contains("public_key")) {
-                PublicKey = d["public_key"].get<std::string>();
-            }
-            info("Authentication successful!");
-        } else
-            info("Authentication failed!");
-        if (d.contains("message")) {
-            d.erase("private_key");
-            d.erase("public_key");
-            debug("Authentication result: " + d["message"].get<std::string>());
-            return d.dump();
-        }
-        return GetFail("Invalid message parsing!");
     } catch (const std::exception& e) {
-        return GetFail(e.what());
+        return GetFail(std::string("Failed to parse player name: ") + e.what());
     }
+
+    Name = SanitizePlayerName(std::move(Name));
+    if (Name.empty()) {
+        // empty name = play as guest
+        LoginAuth = true;
+        Username = "";
+        UserRole = "USER";
+        UserID = 0;
+        UpdateKey(nullptr);
+        info("Offline mode: no name given, joining as Guest");
+        return R"({"success":true,"message":"Offline mode: joining as Guest (no name set)"})";
+    }
+
+    LoginAuth = true;
+    Username = Name;
+    UserRole = "USER";
+    UserID = 0;
+    UpdateKey(Name.c_str());
+    info("Offline mode: player name set to '" + Name + "'");
+    return R"({"success":true,"message":"Offline mode: player name saved locally"})";
 }
 
 void CheckLocalKey() {
-    if (fs::exists("key") && fs::file_size("key") < 100) {
-        std::ifstream Key("key");
+    // === OFFLINE MODE: restore the locally saved player name, never contact
+    // any server. Always "logged in" — online identity simply does not exist.
+    LoginAuth = true;
+    UserRole = "USER";
+    UserID = 0;
+    Username = "";
+    PublicKey = "";
+    if (fs::exists(PlayerNameFile) && fs::file_size(PlayerNameFile) < 100) {
+        std::ifstream Key(PlayerNameFile);
         if (Key.is_open()) {
-            auto Size = fs::file_size("key");
+            auto Size = fs::file_size(PlayerNameFile);
             std::string Buffer(Size, 0);
             Key.read(&Buffer[0], Size);
             Key.close();
-
-            for (char& c : Buffer) {
-                if (!std::isalnum(c) && c != '-') {
-                    UpdateKey(nullptr);
-                    return;
-                }
-            }
-
-            Buffer = HTTP::Post("https://auth.beammp.com/userlogin", R"({"pk":")" + Buffer + "\"}");
-
-            nlohmann::json d = nlohmann::json::parse(Buffer, nullptr, false);
-
-            if (Buffer.empty() || Buffer.at(0) != '{' || d.is_discarded()) {
-                error(Buffer);
-                info("Invalid answer from authentication servers.");
-                UpdateKey(nullptr);
-            }
-            if (d["success"].get<bool>()) {
-                LoginAuth = true;
-                UpdateKey(d["private_key"].get<std::string>().c_str());
-                PublicKey = d["public_key"].get<std::string>();
-                if (d.contains("username")) {
-                    Username = d["username"].get<std::string>();
-                }
-                if (d.contains("role")) {
-                    UserRole = d["role"].get<std::string>();
-                }
-                if (d.contains("id")) {
-                    UserID = d["id"].get<int>();
-                }
-            } else {
-                info("Auto-Authentication unsuccessful please re-login!");
-                UpdateKey(nullptr);
+            Username = SanitizePlayerName(std::move(Buffer));
+            if (!Username.empty()) {
+                info("Offline mode: using saved player name '" + Username + "'");
             }
         } else {
-            warn("Could not open saved key!");
-            UpdateKey(nullptr);
+            warn("Could not open saved player name file!");
         }
-    } else
-        UpdateKey(nullptr);
+    }
+    if (Username.empty()) {
+        debug("Offline mode: no saved player name, will join as Guest");
+    }
 }

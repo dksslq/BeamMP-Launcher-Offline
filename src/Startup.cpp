@@ -331,74 +331,12 @@ bool VerifySignature(const std::filesystem::path& filePath)
 #endif
 
 void CheckForUpdates(const std::string& CV) {
-    std::string LatestHash = HTTP::Get("https://backend.beammp.com/sha/launcher?branch=" + Branch + "&pk=" + PublicKey);
-    std::string LatestVersion = HTTP::Get(
-        "https://backend.beammp.com/version/launcher?branch=" + Branch + "&pk=" + PublicKey);
-
-    std::regex sha256_pattern(R"(^[a-fA-F0-9]{64}$)");
-    std::smatch match;
-
-    if (LatestHash.length() != 64 || !std::regex_match(LatestHash, match, sha256_pattern)) {
-        error("Invalid hash from backend, skipping update check.");
-        debug("Launcher hash in question: " + LatestHash);
-        return;
-    }
-
-    transform(LatestHash.begin(), LatestHash.end(), LatestHash.begin(), ::tolower);
-    beammp_fs_string BP(GetBP() / GetEN()), Back(GetBP() / beammp_wide("BeamMP-Launcher.back"));
-
-    std::string FileHash = Utils::GetSha256HashReallyFastFile(BP);
-
-    if (FileHash != LatestHash && IsOutdated(Version(VersionStrToInts(GetVer() + GetPatch())), Version(VersionStrToInts(LatestVersion)))) {
-        if (!options.no_update) {
-            info("Launcher update " + LatestVersion + " found!");
-#if defined(__linux__)
-            error("Auto update is NOT implemented for the Linux version. Please update manually ASAP as updates contain security patches.");
-#else
-            info("Downloading Launcher update " + LatestHash);
-            std::wstring DownloadLocation = GetBP() / (beammp_wide("new_") + GetEN());
-            if (HTTP::Download(
-                    "https://backend.beammp.com/builds/launcher?download=true"
-                    "&pk="
-                        + PublicKey + "&branch=" + Branch,
-                    DownloadLocation, LatestHash)) {
-                if (!VerifySignature(DownloadLocation) || !CheckThumbprint(DownloadLocation)) {
-                    std::error_code ec;
-                    fs::remove(DownloadLocation, ec);
-                    if (ec) {
-                        error("Failed to remove broken launcher update");
-                    }
-                    throw std::runtime_error("The authenticity of the updated launcher could not be verified, it was corrupted or tampered with.");
-                }
-
-                info("Update signature is valid");
-
-                std::error_code ec;
-                fs::remove(Back, ec);
-                if (ec == std::errc::permission_denied) {
-                    error("Failed to remove old backup file: " + ec.message() + ". Using alternative name.");
-                    fs::rename(BP, Back + beammp_wide(".") + Utils::ToWString(FileHash.substr(0, 8)));
-                } else {
-                    fs::rename(BP, Back);
-                }
-                fs::rename(GetBP() / (beammp_wide("new_") + GetEN()), BP);
-                URelaunch();
-            } else {
-                if (fs::exists(DownloadLocation)) {
-                    std::error_code error_code;
-                    fs::remove(DownloadLocation, error_code);
-                    if (error_code) {
-                        error("Failed to remove broken launcher update");
-                    }
-                }
-                throw std::runtime_error("Failed to download the launcher update! Please try manually updating it, https://docs.beammp.com/FAQ/Update-launcher/");
-            }
-#endif
-        } else {
-            warn("Launcher update was found, but not updating because --no-update or --dev was specified.");
-        }
-    } else
-        info("Launcher version is up to date. Latest version: " + LatestVersion);
+    // === OFFLINE MODE (BeamMP-Offline) ===
+    // Update checking/downloading required backend.beammp.com. The offline
+    // edition never contacts any server. Update by merging upstream into
+    // this repository (see CONTEXT.md / UPSTREAM-SYNC.md in the repo root).
+    (void)CV;
+    info("Offline edition: skipping launcher update check (no internet required)");
     TraceBack++;
 }
 
@@ -513,51 +451,49 @@ void PreGame(const beammp_fs_string& GamePath) {
     CheckMP(GetGamePath() / beammp_wide("mods/multiplayer"));
     info(beammp_wide("Game user path: ") + beammp_fs_string(GetGamePath()));
 
-    if (!options.no_download) {
-        std::string LatestHash = HTTP::Get("https://backend.beammp.com/sha/mod?branch=" + Branch + "&pk=" + PublicKey);
-        transform(LatestHash.begin(), LatestHash.end(), LatestHash.begin(), ::tolower);
-        LatestHash.erase(std::remove_if(LatestHash.begin(), LatestHash.end(),
-                             [](auto const& c) -> bool { return !std::isalnum(c); }),
-            LatestHash.end());
-
-        std::regex sha256_pattern(R"(^[a-fA-F0-9]{64}$)");
-        std::smatch match;
-
-        if (LatestHash.length() != 64 || !std::regex_match(LatestHash, match, sha256_pattern)) {
-            error("Invalid hash from backend, skipping mod update check.");
-            debug("Mod hash in question: " + LatestHash);
-            return;
+    try {
+        if (!fs::exists(GetGamePath() / beammp_wide("mods/multiplayer"))) {
+            fs::create_directories(GetGamePath() / beammp_wide("mods/multiplayer"));
         }
-
-        try {
-            if (!fs::exists(GetGamePath() / beammp_wide("mods/multiplayer"))) {
-                fs::create_directories(GetGamePath() / beammp_wide("mods/multiplayer"));
-            }
-            EnableMP();
-        } catch (std::exception& e) {
-            fatal(e.what());
-        }
+        EnableMP();
+    } catch (std::exception& e) {
+        fatal(e.what());
+    }
 #if defined(_WIN32)
-        std::wstring ZipPath(GetGamePath() / LR"(mods\multiplayer\BeamMP.zip)");
+    std::wstring ZipPath(GetGamePath() / LR"(mods\multiplayer\BeamMP.zip)");
 #elif defined(__linux__)
-        // Linux version of the game cant handle mods with uppercase names
-        std::string ZipPath(GetGamePath() / R"(mods/multiplayer/beammp.zip)");
+    // Linux version of the game cant handle mods with uppercase names
+    std::string ZipPath(GetGamePath() / R"(mods/multiplayer/beammp.zip)");
 #endif
 
-        std::string FileHash = fs::exists(ZipPath) ? Utils::GetSha256HashReallyFastFile(ZipPath) : "";
-
-        if (FileHash != LatestHash) {
-            info("Downloading BeamMP Update " + LatestHash);
-            HTTP::Download("https://backend.beammp.com/builds/client?download=true"
-                           "&pk="
-                    + PublicKey + "&branch=" + Branch,
-                ZipPath, LatestHash);
+    // === OFFLINE MODE (BeamMP-Offline) ===
+    // Upstream downloaded the client mod (BeamMP.zip) from the BeamMP backend.
+    // Offline edition never contacts any server. Instead we look for a local
+    // copy of the mod: 1) already installed in the game folder, or 2) shipped
+    // next to the launcher executable (e.g. from our GitHub release assets).
+    if (fs::exists(ZipPath)) {
+        info("Offline edition: using locally installed BeamMP mod");
+    } else {
+        beammp_fs_string LocalZip = GetBP() / beammp_wide("BeamMP.zip");
+        if (fs::exists(LocalZip)) {
+            try {
+                fs::copy_file(LocalZip, ZipPath, fs::copy_options::overwrite_existing);
+                info("Offline edition: installed BeamMP mod from launcher folder");
+            } catch (const std::exception& e) {
+                fatal(std::string("Found BeamMP.zip next to the launcher but failed to copy it into the game folder: ") + e.what());
+            }
+        } else {
+            error("BeamMP mod (BeamMP.zip) not found!");
+            error("Please download 'BeamMP.zip' from this project's GitHub releases and place it either:");
+            error("  1. next to the launcher executable, or");
+            error("  2. in <game userfolder>/mods/multiplayer/ directly");
+            fatal("Cannot continue without the BeamMP multiplayer mod.");
         }
+    }
 
-        beammp_fs_string Target(GetGamePath() / beammp_wide("mods/unpacked/beammp"));
+    beammp_fs_string Target(GetGamePath() / beammp_wide("mods/unpacked/beammp"));
 
-        if (fs::is_directory(Target) && !fs::is_directory(Target + beammp_wide("/.git"))) {
-            fs::remove_all(Target);
-        }
+    if (fs::is_directory(Target) && !fs::is_directory(Target + beammp_wide("/.git"))) {
+        fs::remove_all(Target);
     }
 }

@@ -65,6 +65,6 @@ int main(int argc, const char** argv) try {
 } catch (const std::exception& e) {
     error(std::string("Exception in main(): ") + e.what());
     info("Closing in 5 seconds");
-    info("If this keeps happening, contact us on either: Forum: https://forum.beammp.com, Discord: https://discord.gg/beammp");
+    info("If this keeps happening, please open an issue at the BeamMP-Offline GitHub repository (see CONTEXT.md).");
     std::this_thread::sleep_for(std::chrono::seconds(5));
 }

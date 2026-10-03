@@ -225,9 +225,11 @@ void Parse(std::string Data, SOCKET CSocket) {
             Terminate = true;
             TCPTerminate = true;
             Data.clear();
-            futures.push_back(std::async(std::launch::async, []() {
-                CoreSend("B" + HTTP::Get("https://backend.beammp.com/servers-info"));
-            }));
+            // === OFFLINE MODE (BeamMP-Offline) ===
+            // Upstream fetched the public server list from the BeamMP backend.
+            // Offline edition has no server list; return an empty one so the
+            // in-game UI falls back to Direct Connect (manual IP entry).
+            CoreSend("B[]");
         }
         break;
     case 'C':
