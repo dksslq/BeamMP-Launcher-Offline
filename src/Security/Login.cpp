@@ -104,7 +104,7 @@ std::string Login(const std::string& fields) {
         UserID = 0;
         UpdateKey(nullptr);
         info("Offline mode: no name given, joining as Guest");
-        return R"({"success":true,"message":"Offline mode: joining as Guest (no name set)"})";
+        return R"json({"success":true,"message":"Offline mode: joining as Guest (no name set)"})json";
     }
 
     LoginAuth = true;
