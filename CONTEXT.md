@@ -23,7 +23,9 @@ BeamMP 官方启动器（BeamMP-Launcher/BeamMP-Launcher）的**纯离线版**�
 | `src/Startup.cpp` `CheckForUpdates()` | 空操作 |
 | `src/Startup.cpp` `PreGame()` | mod 本地安装逻辑（见下），删除 backend 下载；Launcher 同目录 zip 为权威副本，与游戏目录不一致时自动覆盖安装（一键修复被官方 Launcher 覆盖的 mod） |
 | `.github/workflows/release.yml` | **新增**：tag（v*）触发，构建 Windows exe 并附到 Release |
-| `src/Network/Core.cpp` case 'B' | 返回空服务器列表 `B[]` |
+| `src/Network/Core.cpp` case 'B' | 服务器列表：本地 `servers.json`（LAN/私有，排前）+ **只读**拉取 `https://backend.beammp.com/servers-info`（3s 连接/8s 总超时，离线/失败静默降级）合并返回；无任何认证。**v1.0.1 起** |
+| `src/Network/Core.cpp` `IsAllowedLink()` | github 白名单放宽为任意仓库（UI 链接指向 dksslq/BeamMP-Offline） |
+| `src/Network/Http.cpp` `GetWithTimeout()` | **新增**：带连接/总超时的只读 GET（每次新建 CURL 句柄，不污染 Get/Post 的 thread_local 句柄） |
 | `src/Network/Resources.cpp` `Auth()` | 发送 `Username` 而非 `PublicKey` |
 | `src/Network/Http.cpp` `StartProxy()` | 空操作（`ProxyPort=0`） |
 | `src/main.cpp` | 报错提示指向离线仓库 |
