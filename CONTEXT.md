@@ -21,7 +21,8 @@ BeamMP 官方启动器（BeamMP-Launcher/BeamMP-Launcher）的**纯离线版**�
 |---|---|
 | `src/Security/Login.cpp` | 整文件重写：离线昵称登录 + 本地 `player_name` 持久化 |
 | `src/Startup.cpp` `CheckForUpdates()` | 空操作 |
-| `src/Startup.cpp` `PreGame()` | mod 本地安装逻辑（见上），删除 backend 下载 |
+| `src/Startup.cpp` `PreGame()` | mod 本地安装逻辑（见下），删除 backend 下载；Launcher 同目录 zip 为权威副本，与游戏目录不一致时自动覆盖安装（一键修复被官方 Launcher 覆盖的 mod） |
+| `.github/workflows/release.yml` | **新增**：tag（v*）触发，构建 Windows exe 并附到 Release |
 | `src/Network/Core.cpp` case 'B' | 返回空服务器列表 `B[]` |
 | `src/Network/Resources.cpp` `Auth()` | 发送 `Username` 而非 `PublicKey` |
 | `src/Network/Http.cpp` `StartProxy()` | 空操作（`ProxyPort=0`） |
@@ -40,6 +41,14 @@ git merge upstream/master     # 上游默认分支是 master
 2. 上表离线语义必须保留；上游重写同区域时重新套用离线逻辑；
 3. 合并后自检：`grep -rn "HTTP::Get\|HTTP::Post\|HTTP::Download\|beammp.com" src/`
    —— 除 `Http.cpp` 中未被调用的函数定义和注释外应为空；CI 绿灯。
+
+## mod 安装优先级（语义要点）
+
+1. Launcher 同目录 `BeamMP.zip` = 权威离线副本（与游戏目录 zip 大小不同 → 覆盖安装）；
+2. 游戏目录已有 zip → 直接用；
+3. 都没有 → 报错并提示从主仓库 Release 下载。
+**警告**：不要对本游戏目录运行官方 Launcher —— 它会用官方 backend 版覆盖 BeamMP.zip。
+我们的 Launcher 永不联网，离线 mod 不会被静默"更新"回官方版。
 
 ## 构建
 

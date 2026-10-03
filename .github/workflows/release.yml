@@ -1,0 +1,53 @@
+name: Release Launcher
+
+# Tag-triggered release build, mirroring the upstream release flow:
+# pushing a tag like v1.0.0-offline-launcher builds the Windows launcher
+# and attaches BeamMP-Launcher.exe to the GitHub release.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  BUILD_TYPE: Release
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: 'true'
+
+      - name: Restore artifacts, or run vcpkg, build and cache artifacts
+        uses: lukka/run-vcpkg@v7
+        id: runvcpkg
+        with:
+          vcpkgArguments: 'discord-rpc zlib nlohmann-json openssl cpp-httplib[openssl]'
+          vcpkgDirectory: '${{ runner.workspace }}/b/vcpkg'
+          vcpkgGitCommitId: 'b5d1a94fb7f88fd835e360fd23a45a09ceedbf48'
+          vcpkgTriplet: 'x64-windows-static'
+
+      - name: Create Build Environment
+        run: cmake -E make_directory ${{github.workspace}}/build-windows
+
+      - name: Configure CMake
+        shell: bash
+        working-directory: ${{github.workspace}}/build-windows
+        run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE='${{ runner.workspace }}/b/vcpkg/scripts/buildsystems/vcpkg.cmake' -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build
+        working-directory: ${{github.workspace}}/build-windows
+        shell: bash
+        run: cmake --build . --config $BUILD_TYPE
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{github.workspace}}/build-windows/Release/BeamMP-Launcher.exe
+          fail_on_unmatched_files: true

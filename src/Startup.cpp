@@ -372,9 +372,14 @@ void LinuxPatch() {
 #if defined(_WIN32)
 
 void InitLauncher() {
-    SetConsoleTitleA(("BeamMP Launcher v" + std::string(GetVer()) + GetPatch()).c_str());
+    SetConsoleTitleA(("BeamMP-Launcher OFFLINE v" + std::string(GetVer()) + GetPatch()).c_str());
     SetConsoleOutputCP(CP_UTF8);
     _setmode(_fileno(stdout), _O_U8TEXT);
+    info("==============================================");
+    info("  BeamMP-Launcher OFFLINE EDITION v" + std::string(GetVer()) + GetPatch());
+    info("  No account, no key, no internet required.");
+    info("  Join servers via Direct Connect (IP:Port).");
+    info("==============================================");
     debug("Launcher Version : " + GetVer() + GetPatch());
     CheckName();
     LinuxPatch();
@@ -384,7 +389,8 @@ void InitLauncher() {
 #elif defined(__linux__)
 
 void InitLauncher() {
-    info("BeamMP Launcher v" + GetVer() + GetPatch());
+    info("BeamMP-Launcher OFFLINE EDITION v" + GetVer() + GetPatch());
+    info("No account, no key, no internet required.");
     CheckName();
     CheckLocalKey();
     CheckForUpdates(std::string(GetVer()) + GetPatch());
@@ -469,13 +475,25 @@ void PreGame(const beammp_fs_string& GamePath) {
     // === OFFLINE MODE (BeamMP-Offline) ===
     // Upstream downloaded the client mod (BeamMP.zip) from the BeamMP backend.
     // Offline edition never contacts any server. Instead we look for a local
-    // copy of the mod: 1) already installed in the game folder, or 2) shipped
-    // next to the launcher executable (e.g. from our GitHub release assets).
-    if (fs::exists(ZipPath)) {
-        info("Offline edition: using locally installed BeamMP mod");
-    } else {
-        beammp_fs_string LocalZip = GetBP() / beammp_wide("BeamMP.zip");
-        if (fs::exists(LocalZip)) {
+    // copy of the mod. Priority order:
+    //   1) BeamMP.zip next to the launcher  -> authoritative offline copy,
+    //      it is installed over the game folder copy whenever they differ.
+    //   2) BeamMP.zip already in the game   -> used as-is.
+    //   3) neither                          -> fatal with instructions.
+    // Note: never run the OFFICIAL launcher against this game install - it
+    // would overwrite BeamMP.zip with the online version from the backend.
+    // Our own launcher never touches the network, and the shipped zip takes
+    // priority, so the offline mod cannot be "updated" to upstream silently.
+    beammp_fs_string LocalZip = GetBP() / beammp_wide("BeamMP.zip");
+    if (fs::exists(LocalZip)) {
+        bool NeedInstall = true;
+        if (fs::exists(ZipPath)) {
+            std::error_code ec1, ec2;
+            auto LocalSize = fs::file_size(LocalZip, ec1);
+            auto InstalledSize = fs::file_size(ZipPath, ec2);
+            NeedInstall = ec1 || ec2 || LocalSize != InstalledSize;
+        }
+        if (NeedInstall) {
             try {
                 fs::copy_file(LocalZip, ZipPath, fs::copy_options::overwrite_existing);
                 info("Offline edition: installed BeamMP mod from launcher folder");
@@ -483,12 +501,17 @@ void PreGame(const beammp_fs_string& GamePath) {
                 fatal(std::string("Found BeamMP.zip next to the launcher but failed to copy it into the game folder: ") + e.what());
             }
         } else {
-            error("BeamMP mod (BeamMP.zip) not found!");
-            error("Please download 'BeamMP.zip' from this project's GitHub releases and place it either:");
-            error("  1. next to the launcher executable, or");
-            error("  2. in <game userfolder>/mods/multiplayer/ directly");
-            fatal("Cannot continue without the BeamMP multiplayer mod.");
+            info("Offline edition: using locally installed BeamMP mod (matches launcher copy)");
         }
+    } else if (fs::exists(ZipPath)) {
+        info("Offline edition: using locally installed BeamMP mod");
+        warn("Tip: keep a copy of BeamMP.zip next to the launcher so it is always (re)installed from there.");
+    } else {
+        error("BeamMP mod (BeamMP.zip) not found!");
+        error("Please download 'BeamMP.zip' from this project's GitHub releases and place it either:");
+        error("  1. next to the launcher executable, or");
+        error("  2. in <game userfolder>/mods/multiplayer/ directly");
+        fatal("Cannot continue without the BeamMP multiplayer mod.");
     }
 
     beammp_fs_string Target(GetGamePath() / beammp_wide("mods/unpacked/beammp"));
