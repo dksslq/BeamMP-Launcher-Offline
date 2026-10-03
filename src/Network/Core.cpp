@@ -28,6 +28,9 @@
 #include "Logger.h"
 #include "Startup.h"
 #include <charconv>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <thread>
@@ -35,6 +38,8 @@
 #include "Options.h"
 
 #include <future>
+
+namespace fs = std::filesystem;
 
 extern int TraceBack;
 std::set<std::string>* ConfList = nullptr;
@@ -197,7 +202,12 @@ void CoreSend(std::string data) {
 }
 
 bool IsAllowedLink(const std::string& Link) {
-    std::regex link_pattern(R"(https:\/\/(?:\w+)?(?:\.)?(?:beammp\.com|beammp\.gg|github\.com\/BeamMP\/|discord\.gg|patreon\.com\/BeamMP))");
+    // === OFFLINE MODE (BeamMP-Offline) ===
+    // Widened from github.com/BeamMP/ to any GitHub repository: this
+    // project's UI links point at github.com/dksslq/BeamMP-Offline, which
+    // must be openable just like the upstream repo links were. Still a
+    // read-only check, no authentication involved.
+    std::regex link_pattern(R"(https:\/\/(?:\w+)?(?:\.)?(?:beammp\.com|beammp\.gg|github\.com\/[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-]+|discord\.gg|patreon\.com\/BeamMP))");
     std::smatch link_match;
     return std::regex_search(Link, link_match, link_pattern) && link_match.position() == 0;
 }
@@ -226,10 +236,120 @@ void Parse(std::string Data, SOCKET CSocket) {
             TCPTerminate = true;
             Data.clear();
             // === OFFLINE MODE (BeamMP-Offline) ===
-            // Upstream fetched the public server list from the BeamMP backend.
-            // Offline edition has no server list; return an empty one so the
-            // in-game UI falls back to Direct Connect (manual IP entry).
-            CoreSend("B[]");
+            // Read-only public server list support with graceful offline
+            // fallback. No authentication is involved anywhere here.
+            // Upstream did a blocking HTTP::Get() against the BeamMP backend
+            // and sent the raw response. The offline edition instead:
+            //   1. reads an optional local servers.json (next to the launcher
+            //      binary) so users can pin LAN / private servers first;
+            //   2. best-effort fetches the public list with hard 3s connect
+            //      / 8s total timeouts, so being offline can never stall us;
+            //   3. merges both arrays (local first, public second) by plain
+            //      string concatenation - no JSON parsing, so no parse
+            //      failures either.
+            // Every failure (missing file, offline, timeout, non-array body)
+            // is silently degraded to fewer entries with debug logs only and
+            // must never throw or crash. The whole task runs async so
+            // Parse() never blocks the game connection.
+            futures.push_back(std::async(std::launch::async, []() {
+                constexpr const char* PublicListURL = "https://backend.beammp.com/servers-info";
+                constexpr std::uintmax_t MaxListBytes = 10 * 1024 * 1024; // 10 MB sanity cap
+
+                auto Trim = [](const std::string& In) -> std::string {
+                    const char* Whitespace = " \t\r\n";
+                    const size_t Begin = In.find_first_not_of(Whitespace);
+                    if (Begin == std::string::npos) {
+                        return "";
+                    }
+                    const size_t End = In.find_last_not_of(Whitespace);
+                    return In.substr(Begin, End - Begin + 1);
+                };
+
+                // Returns the content between the outer '[' and ']' of a JSON
+                // array string, or "" if the payload is not a usable array
+                // (empty, degenerate like "[" or "]", or an empty "[]" list).
+                auto ArrayEntries = [Trim](const std::string& Raw) -> std::string {
+                    const std::string Trimmed = Trim(Raw);
+                    if (Trimmed.size() < 2 || Trimmed.front() != '[' || Trimmed.back() != ']') {
+                        return "";
+                    }
+                    return Trim(Trimmed.substr(1, Trimmed.size() - 2));
+                };
+
+                // 1) Local list (optional servers.json next to the launcher)
+                std::string LocalEntries;
+                try {
+                    const fs::path LocalFile = fs::path(GetBP()) / "servers.json";
+                    if (fs::exists(LocalFile)) {
+                        const std::uintmax_t Size = fs::file_size(LocalFile);
+                        if (Size >= 1 && Size <= MaxListBytes) {
+                            std::ifstream File(LocalFile, std::ios::binary);
+                            if (File.is_open()) {
+                                std::string Raw(Size, '\0');
+                                File.read(Raw.data(), static_cast<std::streamsize>(Size));
+                                Raw.resize(static_cast<size_t>(File.gcount()));
+                                LocalEntries = ArrayEntries(Raw);
+                                if (LocalEntries.empty()) {
+                                    debug("(Core) local servers.json is not a usable JSON array, ignoring it");
+                                }
+                            } else {
+                                debug("(Core) failed to open local servers.json, ignoring it");
+                            }
+                        } else {
+                            debug("(Core) local servers.json has an unusable size (" + std::to_string(Size) + " bytes), ignoring it");
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    debug(std::string("(Core) failed to read local servers.json: ") + e.what());
+                    LocalEntries.clear();
+                } catch (...) {
+                    debug("(Core) failed to read local servers.json (unknown error), ignoring it");
+                    LocalEntries.clear();
+                }
+
+                // 2) Public list (best-effort read-only fetch, offline-safe)
+                std::string PublicEntries;
+                try {
+                    const std::string PublicRaw = HTTP::GetWithTimeout(PublicListURL, 3, 8);
+                    PublicEntries = ArrayEntries(PublicRaw);
+                    if (PublicEntries.empty() && !Trim(PublicRaw).empty()) {
+                        debug("(Core) public server list response is not a usable JSON array, ignoring it");
+                    }
+                } catch (const std::exception& e) {
+                    debug(std::string("(Core) public server list fetch failed: ") + e.what());
+                    PublicEntries.clear();
+                } catch (...) {
+                    debug("(Core) public server list fetch failed (unknown error), ignoring it");
+                    PublicEntries.clear();
+                }
+
+                // 3) Merge: local entries first (LAN/private shown on top),
+                //    public entries after. The arrays are re-assembled from
+                //    their inner content, which keeps the output valid JSON
+                //    even for degenerate inputs like "[]", "[" or "]".
+                std::string Merged;
+                if (LocalEntries.empty() && PublicEntries.empty()) {
+                    Merged = "[]";
+                } else if (LocalEntries.empty()) {
+                    Merged = "[" + PublicEntries + "]";
+                } else if (PublicEntries.empty()) {
+                    Merged = "[" + LocalEntries + "]";
+                } else {
+                    Merged = "[" + LocalEntries + "," + PublicEntries + "]";
+                }
+
+                if (LocalEntries.empty() && PublicEntries.empty()) {
+                    info("(Core) server list: empty (no local servers.json, public list unavailable)");
+                } else if (LocalEntries.empty()) {
+                    info("(Core) server list: public servers only");
+                } else if (PublicEntries.empty()) {
+                    info("(Core) server list: local servers only (offline fallback)");
+                } else {
+                    info("(Core) server list: local + public servers");
+                }
+
+                CoreSend("B" + Merged);
+            }));
         }
         break;
     case 'C':

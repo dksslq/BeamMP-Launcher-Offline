@@ -55,6 +55,43 @@ std::string HTTP::Get(const std::string& IP) {
     return Ret;
 }
 
+std::string HTTP::GetWithTimeout(const std::string& IP, long ConnectTimeoutSeconds, long TotalTimeoutSeconds) {
+    // === OFFLINE MODE (BeamMP-Offline) ===
+    // Same as Get(), but with tight caller-provided timeouts and a fresh
+    // per-call CURL handle (instead of the shared thread_local one used by
+    // Get()/Post()), so the short timeouts configured here can never leak
+    // into other requests on the reused handle. Used for best-effort,
+    // read-only fetches (e.g. the public server list) that must not block
+    // the launcher when offline. Failures are logged at debug level on
+    // purpose: offline is a normal, expected condition, and the caller
+    // degrades gracefully. Returns "" on failure, like Get().
+    std::string Ret;
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        CURLcode res;
+        char errbuf[CURL_ERROR_SIZE];
+        curl_easy_setopt(curl, CURLOPT_URL, IP.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&Ret);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, ConnectTimeoutSeconds); // seconds
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, TotalTimeoutSeconds); // seconds
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
+        errbuf[0] = 0;
+        res = curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+        if (res != CURLE_OK) {
+            debug("GET to " + IP + " failed: " + std::string(curl_easy_strerror(res)));
+            debug("Curl error: " + std::string(errbuf));
+            return "";
+        }
+    } else {
+        debug("Curl easy init failed");
+        return "";
+    }
+    return Ret;
+}
+
 std::string HTTP::Post(const std::string& IP, const std::string& Fields) {
     std::string Ret;
     static thread_local CURL* curl = curl_easy_init();
