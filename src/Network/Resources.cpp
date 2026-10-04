@@ -81,8 +81,17 @@ std::string Auth(SOCKET Sock) {
     // In offline mode we send the locally chosen player name instead; the
     // offline server uses it directly as the player's name. An empty name
     // means the server treats us as "Guest".
+    // NEVER send a zero-length name packet: server versions <= v1.0.1 read
+    // the packet header, see an empty payload, and mistake it for a closed
+    // connection ("Client kicked: Connection closed during authentication").
+    // Sending the literal name "Guest" joins the player under that name on
+    // every offline server version, and matches what the server would have
+    // assigned to an unnamed player anyway.
     extern std::string Username;
     std::string OfflineName = Username;
+    if (OfflineName.empty()) {
+        OfflineName = "Guest";
+    }
     if (OfflineName.size() > 32) {
         OfflineName.resize(32);
     }

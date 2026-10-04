@@ -26,7 +26,7 @@ BeamMP 官方启动器（BeamMP-Launcher/BeamMP-Launcher）的**纯离线版**�
 | `src/Network/Core.cpp` case 'B' | 服务器列表：本地 `servers.json`（LAN/私有，排前）+ **只读**拉取 `https://backend.beammp.com/servers-info`（3s 连接/8s 总超时，离线/失败静默降级）合并返回；无任何认证。**v1.0.1 起** |
 | `src/Network/Core.cpp` `IsAllowedLink()` | github 白名单放宽为任意仓库（UI 链接指向 dksslq/BeamMP-Offline） |
 | `src/Network/Http.cpp` `GetWithTimeout()` | **新增**：带连接/总超时的只读 GET（每次新建 CURL 句柄，不污染 Get/Post 的 thread_local 句柄） |
-| `src/Network/Resources.cpp` `Auth()` | 发送 `Username` 而非 `PublicKey` |
+| `src/Network/Resources.cpp` `Auth()` | 发送 `Username` 而非 `PublicKey`。**v1.0.2 起**：`Username` 为空（未命名/guest）时回退发送字面量 `"Guest"`，**永不发送 0 字节名字包** —— v1.0.1 及更早的离线服务端会把空载荷误判为"认证阶段连接断开"并踢出（"Connection closed during authentication"）。已知取舍：未命名玩家以普通名字 `Guest` 进入，不再触发服务端 `AllowGuests=false` 拦截（离线版该设置仅对仍发送空包的旧客户端有效） |
 | `src/Network/Http.cpp` `StartProxy()` | 空操作（`ProxyPort=0`） |
 | `src/main.cpp` | 报错提示指向离线仓库 |
 
