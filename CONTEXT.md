@@ -57,3 +57,14 @@ git merge upstream/master     # 上游默认分支是 master
 `.github/workflows/{cmake-linux,cmake-windows}.yml`（上游自带）负责构建。
 注意：`src/*.yml`（linux.yml 等）是上游误放目录的历史遗留，不在 `.github/workflows/`
 下，不会被执行，保持原样即可。
+
+## 11. 安全审计记录（2026-10-04，v1.0.2-offline-launcher = e9a0991）
+
+- 全部离线 diff（6 commits/10 files）逐行审计：无后门/遥测/凭据外发。
+- 已移除的外发路径：launcher+mod 自动更新（backend.beammp.com 下载）、本地 HTTP 代理
+  （原会把 PrivateKey 附加到 backend/forum 转发头，现 ProxyPort=0 整体禁用）。
+- 保留的外发路径（读-only）：公共服务器列表 GET backend.beammp.com/servers-info，
+  不携带密钥/玩家名，3s/8s 硬超时；浏览器打开链接需过 IsAllowedLink 白名单且用户点击。
+- 发布二进制验证：v1.0.2 BeamMP-Launcher.exe 内嵌域名仅
+  backend.beammp.com / curl.se / github.com，无隐藏端点。
+- 提示：discord-rpc 为上游死依赖（源码零调用，运行时不连 Discord），可考虑后续从 vcpkg 列表移除。
